@@ -16,17 +16,18 @@ def get_args():
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
     parser.add_argument('--epochs', type=int, default=200, help='Number of epochs')
+    parser.add_argument('--no_progress_bar', action='store_true', help='Disable tqdm progress bar')
     parser.add_argument('--save_path', type=str, default='./checkpoints/best_ann.pth', help='Path to save best model')
     return parser.parse_args()
 
-def train(model, loader, criterion, optimizer, device):
+def train(model, loader, criterion, optimizer, device, disable_tqdm=False):
     model.train()
     running_loss = 0.0
     correct = 0
     total = 0
     
     # Dùng tqdm để hiện thanh tiến trình
-    pbar = tqdm(loader, desc="Training", leave=False)
+    pbar = tqdm(loader, desc="Training", leave=False, disable=disable_tqdm)
     for images, labels in pbar:
         images, labels = images.to(device), labels.to(device)
         
@@ -41,18 +42,19 @@ def train(model, loader, criterion, optimizer, device):
         total += labels.size(0)
         correct += predicted.eq(labels).sum().item()
         
-        pbar.set_postfix({'Loss': running_loss/total, 'Acc': 100.*correct/total})
+        if not disable_tqdm:
+            pbar.set_postfix({'Loss': running_loss/total, 'Acc': 100.*correct/total})
         
     return running_loss / len(loader), 100. * correct / total
 
-def validate(model, loader, criterion, device):
+def validate(model, loader, criterion, device, disable_tqdm=False):
     model.eval()
     running_loss = 0.0
     correct = 0
     total = 0
     
     with torch.no_grad():
-        for images, labels in tqdm(loader, desc="Validating", leave=False):
+        for images, labels in tqdm(loader, desc="Validating", leave=False, disable=disable_tqdm):
             images, labels = images.to(device), labels.to(device)
             outputs = model(images)
             loss = criterion(outputs, labels)
@@ -87,8 +89,8 @@ def main():
     
     print(f"Start training for {args.epochs} epochs...")
     for epoch in range(args.epochs):
-        train_loss, train_acc = train(model, train_loader, criterion, optimizer, device)
-        val_loss, val_acc = validate(model, test_loader, criterion, device)
+        train_loss, train_acc = train(model, train_loader, criterion, optimizer, device, disable_tqdm=args.no_progress_bar)
+        val_loss, val_acc = validate(model, test_loader, criterion, device, disable_tqdm=args.no_progress_bar)
         scheduler.step()
         
         print(f"Epoch {epoch+1}/{args.epochs} | Train Acc: {train_acc:.2f}% | Val Acc: {val_acc:.2f}%")

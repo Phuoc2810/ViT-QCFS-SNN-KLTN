@@ -13,6 +13,7 @@ def get_args():
     parser = argparse.ArgumentParser(description='Convert ANN to SNN and Evaluate')
     parser.add_argument('--checkpoint_path', type=str, required=True, help='Path to trained ANN checkpoint (.pth)')
     parser.add_argument('--timesteps', type=str, default="4,8,16", help='Comma separated timesteps list (e.g. 4,8,16)')
+    parser.add_argument('--no_progress_bar', action='store_true', help='Disable tqdm')
     return parser.parse_args()
 
 def transfer_weights(ann_model, snn_model):
@@ -42,7 +43,7 @@ def transfer_weights(ann_model, snn_model):
     snn_model.load_state_dict(new_snn_state, strict=True)
     print("Weight transfer complete!")
 
-def evaluate_snn(model, loader, device, T):
+def evaluate_snn(model, loader, device, T, disable_tqdm=False):
     model.eval()
     correct = 0
     total = 0
@@ -54,7 +55,7 @@ def evaluate_snn(model, loader, device, T):
     # Ở đây giả định khởi tạo lại model cho chắc chắn trong vòng lặp main
     
     with torch.no_grad():
-        for images, labels in tqdm(loader, desc=f"Evaluating T={T}"):
+        for images, labels in tqdm(loader, desc=f"Evaluating T={T}", disable=disable_tqdm):
             images, labels = images.to(device), labels.to(device)
             outputs = model(images)
             _, predicted = outputs.max(1)
@@ -93,7 +94,7 @@ def main():
         transfer_weights(ann_model, snn_model)
         
         # Đánh giá
-        acc, duration = evaluate_snn(snn_model, test_loader, device, T)
+        acc, duration = evaluate_snn(snn_model, test_loader, device, T, disable_tqdm=args.no_progress_bar)
         print(f"{T:<10} | {acc:<15.2f} | {duration:<10.2f}")
 
 if __name__ == "__main__":
