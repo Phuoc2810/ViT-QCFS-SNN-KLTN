@@ -18,6 +18,12 @@ def get_args():
     parser.add_argument('--epochs', type=int, default=200, help='Number of epochs')
     parser.add_argument('--no_progress_bar', action='store_true', help='Disable tqdm progress bar')
     parser.add_argument('--save_path', type=str, default='./checkpoints/best_ann.pth', help='Path to save best model')
+    parser.add_argument('--L', type=int, default=8, help='Quantization Levels (QCFS)')
+    parser.add_argument('--T', type=int, default=0, help='Timesteps (0 for ANN, >0 for SNN training)')
+    parser.add_argument('--depth', type=int, default=12, help='Model Depth')
+    parser.add_argument('--embed_dim', type=int, default=192, help='Embedding Dimension')
+    parser.add_argument('--heads', type=int, default=3, help='Number of Heads')
+    
     return parser.parse_args()
 
 def train(model, loader, criterion, optimizer, device, disable_tqdm=False):
@@ -78,9 +84,16 @@ def main():
     train_loader, test_loader = get_dataloader(batch_size=args.batch_size)
     
     # Khởi tạo Model
-    print("Creating ANN Model...")
-    model = VisionTransformer(dim=192, depth=12, heads=3, num_classes=10).to(device)
-    
+    print("Creating ANN Model: Depth={args.depth}, Heads={args.heads}, L={args.L}")
+    model = model = VisionTransformer(
+        dim=args.embed_dim, 
+        depth=args.depth, 
+        heads=args.heads, 
+        num_classes=10,
+        T=args.T,  # Thường ANN thì T=0
+        L=args.L   # Quan trọng cho QCFS
+    ).to(device)
+     
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.05)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
