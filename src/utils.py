@@ -2,6 +2,7 @@ import os
 import random
 import numpy as np
 import torch
+import torch.nn.utils.prune as prune
 import torch.nn as nn
 from torch.utils.data import DataLoader
 import torchvision
@@ -92,6 +93,47 @@ def calculate_snn_synops(model, dataloader, device):
     avg_synops_per_image = total_synops / num_samples
     return avg_synops_per_image
 
+
+def prune_model(model, amount= 0.2):
+    """
+    Cắt tỉa trọng số của mô hình (L1 Unstructured Pruning).
+    
+    Args:
+        model: Mô hình ANN cần cắt tỉa.
+        amount (float): Tỷ lệ cắt tỉa (0.0 đến 1.0). Ví dụ 0.2 là cắt 20% weight bé nhất.
+    """
+    print(f"✂️ Đang tiến hành Pruning (Cắt tỉa) với tỷ lệ: {amount*100}% ...")
+    
+    parameters_to_prune = []
+    
+    # 1. Thu thập tất cả các lớp Linear trong model
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear):
+            parameters_to_prune.append((module, 'weight'))
+    
+    # 2. Thực hiện cắt tỉa toàn cục (Global Pruning)
+    # Cơ chế: Gom tất cả weight lại, tìm 20% bé nhất trên toàn mạng và gán = 0
+    prune.global_unstructured(
+        parameters_to_prune,
+        pruning_method=prune.L1Unstructured,
+        amount=amount,
+    )
+    
+    # 3. "Làm cứng" việc cắt tỉa (Make permanent)
+    # PyTorch mặc định chỉ tạo mặt nạ (mask), ta cần lệnh này để weight thực sự biến thành 0
+    for module, _ in parameters_to_prune:
+        prune.remove(module, 'weight')
+        
+    # 4. Kiểm tra tỷ lệ zero thực tế (để confirm)
+    total_zeros = 0
+    total_params = 0
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear):
+            total_zeros += torch.sum(module.weight == 0).item()
+            total_params += module.weight.nelement()
+            
+    print(f"✅ Pruning hoàn tất! Tỷ lệ thưa (Sparsity): {100. * total_zeros / total_params:.2f}%")
+    return model
 # --- Usage ---
 # You need your trained SNN model and the test_loader
 # snn_model = SpikeVisionTransformer(...)

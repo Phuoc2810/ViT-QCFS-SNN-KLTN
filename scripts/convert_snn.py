@@ -4,6 +4,7 @@ from tqdm import tqdm
 import time
 
 # Import classes
+from src.utils import prune_model
 from src.config import Config
 from src.model_ann import VisionTransformer
 from src.model_snn import SpikeVisionTransformer
@@ -14,6 +15,8 @@ def get_args():
     parser.add_argument('--checkpoint_path', type=str, required=True, help='Path to trained ANN checkpoint (.pth)')
     parser.add_argument('--timesteps', type=str, default="4,8,16", help='Comma separated timesteps list (e.g. 4,8,16)')
     parser.add_argument('--no_progress_bar', action='store_true', help='Disable tqdm')
+    parser.add_arrgumert('--pruning_ratio', type=float, default=0.0,
+                         help='Pruning ratio to apply before conversion (0.0 means no pruning)')
     return parser.parse_args()
 
 def transfer_weights(ann_model, snn_model):
@@ -76,6 +79,13 @@ def main():
     ann_model = VisionTransformer(dim=192, depth=12, heads=3, num_classes=10)
     checkpoint = torch.load(args.checkpoint_path, map_location=device)
     ann_model.load_state_dict(checkpoint['model_state_dict'])
+    
+    # --- THÊM ĐOẠN NÀY ---
+    # Nếu người dùng muốn pruning (ratio > 0)
+    if args.pruning_ratio > 0:
+        ann_model = prune_model(ann_model, amount=args.pruning_ratio)
+    # ---------------------
+    
     ann_model.to(device)
     ann_model.eval()
     
