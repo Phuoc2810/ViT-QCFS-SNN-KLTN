@@ -15,7 +15,7 @@ def get_args():
     parser.add_argument('--checkpoint_path', type=str, required=True, help='Path to trained ANN checkpoint (.pth)')
     parser.add_argument('--timesteps', type=str, default="4,8,16", help='Comma separated timesteps list (e.g. 4,8,16)')
     parser.add_argument('--no_progress_bar', action='store_true', help='Disable tqdm')
-    parser.add_argumert('--pruning_ratio', type=float, default=0.0,
+    parser.add_argument('--pruning_ratio', type=float, default=0.0,
                          help='Pruning ratio to apply before conversion (0.0 means no pruning)')
     parser.add_argument('--embed_dim', type=int, default=192)
     parser.add_argument('--depth', type=int, default=12)
