@@ -14,6 +14,9 @@ def get_args():
     parser.add_argument('--checkpoint_path', type=str, required=True, help='Path to trained ANN checkpoint (.pth)')
     parser.add_argument('--timesteps', type=str, default="4,8,16", help='Comma separated timesteps list (e.g. 4,8,16)')
     parser.add_argument('--no_progress_bar', action='store_true', help='Disable tqdm')
+    parser.add_argument('--embed_dim', type=int, default=192)
+    parser.add_argument('--depth', type=int, default=12)
+    parser.add_argument('--heads', type=int, default=3)
     return parser.parse_args()
 
 def transfer_weights(ann_model, snn_model):
@@ -73,7 +76,12 @@ def main():
     
     # 1. Load ANN
     print(f"Loading ANN from {args.checkpoint_path}")
-    ann_model = VisionTransformer(dim=192, depth=12, heads=3, num_classes=10)
+    ann_model = VisionTransformer(
+        dim=args.embed_dim, 
+        depth=args.depth, 
+        heads=args.heads, 
+        num_classes=10
+    )
     checkpoint = torch.load(args.checkpoint_path, map_location=device)
     ann_model.load_state_dict(checkpoint['model_state_dict'])
     ann_model.to(device)
@@ -88,8 +96,12 @@ def main():
     
     for T in timesteps_list:
         # Khởi tạo SNN mới với T tương ứng
-        snn_model = SpikeVisionTransformer(dim=192, depth=12, heads=3, T=T, L=8).to(device)
-        
+        snn_model = SpikeVisionTransformer(
+            dim=args.embed_dim, # Dùng args
+            depth=args.depth, 
+            heads=args.heads, 
+            T=T, L=8
+        ).to(device)
         # Copy weights
         transfer_weights(ann_model, snn_model)
         
