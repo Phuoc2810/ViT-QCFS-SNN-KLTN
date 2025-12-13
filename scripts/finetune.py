@@ -78,7 +78,7 @@ def main():
     # 2. Khởi tạo & Load Model Gốc
     print(f"Loading checkpoint from {args.checkpoint_path}")
     model = VisionTransformer(
-        dim=args.embed_dim, depth=args.depth, heads=args.heads, num_classes=10
+        dim=args.embed_dim, depth=args.depth, heads=args.heads, num_classes=10, T=0
     ).to(device)
     
     checkpoint = torch.load(args.checkpoint_path, map_location=device)
