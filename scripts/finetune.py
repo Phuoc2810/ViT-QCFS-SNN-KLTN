@@ -87,6 +87,19 @@ def main():
     else:
         model.load_state_dict(checkpoint)
 
+    print("🔧 Đang cưỡng chế toàn bộ mạng về T=0 (Chế độ ANN)...")
+    count = 0
+    for name, module in model.named_modules():
+        # Kiểm tra xem module có thuộc tính T không
+        if hasattr(module, 'T'):
+            module.T = 0 # Ép về 0
+            count += 1
+        # Reset luôn bộ nhớ mem nếu có
+        if hasattr(module, 'mem'):
+            module.mem = None
+            
+    print(f"✅ Đã reset T=0 cho {count} module. Mạng đã sạch sẽ!")
+    
     # 3. Áp dụng Pruning (Tạo Mask)
     pruning_params = apply_pruning(model, args.pruning_ratio)
     
