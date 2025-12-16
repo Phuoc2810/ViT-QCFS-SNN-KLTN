@@ -59,6 +59,13 @@ def make_pruning_permanent(parameters_to_prune):
     for module, name in parameters_to_prune:
         prune.remove(module, name)
 
+def reset_model(model):
+    # Duyet qua các module để reset bộ nhớ mem nếu có
+    for name, module in model.named_modules():
+        # Neu module co bien 'mem', reset no ve None
+        if hasattr(module, 'mem'):
+            module.mem = None
+
 def main():
     args = get_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -107,13 +114,7 @@ def main():
     # Lưu ý: Learning Rate phải RẤT NHỎ (1e-5 hoặc 5e-5) để không phá hỏng weight đang tốt
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     criterion = nn.CrossEntropyLoss()
-    
-    # Đưa đoạn reset này ra thành hàm cho gọn để gọi lại
-    def reset_model_state(model):
-        for name, module in model.named_modules():
-            if hasattr(module, 'mem'):
-                module.mem = None
-            
+     
 
     # 5. Training Loop (Fine-tuning)
     model.train()
@@ -126,7 +127,7 @@ def main():
         
         for batch_idx, (inputs, targets) in enumerate(train_loader):
             inputs, targets = inputs.to(device), targets.to(device)
-            reset_model_state(model)
+            reset_model(model)
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, targets)
