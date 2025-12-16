@@ -67,6 +67,7 @@ def reset_model(model):
             module.mem = None
 
 def main():
+    torch.autograd.set_detect_anomaly(True)
     args = get_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
@@ -108,7 +109,9 @@ def main():
     print(f"✅ Đã reset T=0 cho {count} module. Mạng đã sạch sẽ!")
     
     # 3. Áp dụng Pruning (Tạo Mask)
-    pruning_params = apply_pruning(model, args.pruning_ratio)
+    # Bọc trong no_grad để không dính graph vào vòng lặp train
+    with torch.no_grad():
+        pruning_params = apply_pruning(model, args.pruning_ratio)
     
     # 4. Setup Optimizer cho Fine-tuning
     # Lưu ý: Learning Rate phải RẤT NHỎ (1e-5 hoặc 5e-5) để không phá hỏng weight đang tốt
