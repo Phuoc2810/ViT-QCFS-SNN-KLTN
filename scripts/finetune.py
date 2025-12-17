@@ -26,7 +26,7 @@ def get_args():
     parser.add_argument('--embed_dim', type=int, default=192)
     parser.add_argument('--depth', type=int, default=12)
     parser.add_argument('--heads', type=int, default=3)
-    
+    parser.add_argument('--L', type=int, default=8, help='Quantization levels (e.g. 4, 8, 16)')
     return parser.parse_args()
 
 def apply_pruning(model, amount):
@@ -86,7 +86,7 @@ def main():
     # 2. Khởi tạo & Load Model Gốc
     print(f"Loading checkpoint from {args.checkpoint_path}")
     model = VisionTransformer(
-        dim=args.embed_dim, depth=args.depth, heads=args.heads, num_classes=10, T=0
+        dim=args.embed_dim, depth=args.depth, heads=args.heads, num_classes=10, T=0, L=args.L
     ).to(device)
     
     checkpoint = torch.load(args.checkpoint_path, map_location=device)

@@ -20,6 +20,8 @@ def get_args():
     parser.add_argument('--embed_dim', type=int, default=192)
     parser.add_argument('--depth', type=int, default=12)
     parser.add_argument('--heads', type=int, default=3)
+    parser.add_argument('--L', type=int, default=8, help='Quantization levels (e.g. 4, 8, 16)')
+    
     return parser.parse_args()
 
 def transfer_weights(ann_model, snn_model):
@@ -83,7 +85,8 @@ def main():
         dim=args.embed_dim, 
         depth=args.depth, 
         heads=args.heads, 
-        num_classes=10
+        num_classes=10,
+        L=args.L
     )
     checkpoint = torch.load(args.checkpoint_path, map_location=device)
     ann_model.load_state_dict(checkpoint['model_state_dict'])
@@ -110,7 +113,8 @@ def main():
             dim=args.embed_dim, # Dùng args
             depth=args.depth, 
             heads=args.heads, 
-            T=T, L=8
+            T=T, 
+            L=args.L
         ).to(device)
         # Copy weights
         transfer_weights(ann_model, snn_model)
