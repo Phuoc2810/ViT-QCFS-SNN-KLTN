@@ -1,4 +1,5 @@
 import argparse
+import copy
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -27,6 +28,7 @@ def get_args():
     parser.add_argument('--depth', type=int, default=12)
     parser.add_argument('--heads', type=int, default=3)
     parser.add_argument('--L', type=int, default=8, help='Quantization levels (e.g. 4, 8, 16)')
+    parser.add_argument('--patience', type=int, default=10, help='Stop training if Acc does not increase for X epochs')
     return parser.parse_args()
 
 def apply_pruning(model, amount):
@@ -117,7 +119,11 @@ def main():
     # Lưu ý: Learning Rate phải RẤT NHỎ (1e-5 hoặc 5e-5) để không phá hỏng weight đang tốt
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     criterion = nn.CrossEntropyLoss()
-     
+    
+    # Khởi tạo biến theo dõi Early stopping
+    best_acc = 0.0
+    best_epoch = 0
+    patience_counter = 0
 
     # 5. Training Loop (Fine-tuning)
     model.train()
@@ -145,8 +151,45 @@ def main():
         acc = 100. * correct / total
         print(f"Epoch {epoch+1}/{args.epochs} | Loss: {total_loss/len(train_loader):.4f} | Acc: {acc:.2f}%")
 
-    # 6. Chốt đơn (Lưu model)
+        # Kiểm tra Early Stopping
+        if acc > best_acc:
+            best_acc = acc
+            best_epoch = epoch + 1
+            patience_counter = 0 # Reset bộ đếm kiên nhẫn
+            
+            # Dùng deepcopy để chụp ảnh trạng thái model ngay lúc này
+            # (Cần import copy ở đầu file)
+            best_model_state = copy.deepcopy(model.state_dict())
+            
+            print(f"   ⭐ New Best Accuracy! (Đã lưu trạng thái tạm vào RAM)")
+    
+        else:
+            # Nếu không tốt hơn -> Tăng bộ đếm
+            patience_counter += 1
+            print(f"   ⚠️ No improvement for {patience_counter}/{args.patience} epochs.")
+            
+            # Nếu đợi quá lâu (vượt ngưỡng patience) -> Dừng luôn
+            if patience_counter >= args.patience:
+                print(f"🛑 Early Stopping triggered! Dừng sớm tại epoch {epoch+1}")
+                break # Thoát khỏi vòng lặp for epoch
+#  6. Chốt đơn (Lưu model)
+    print("\n" + "="*50)
+    # Kiểm tra xem có biến best_acc không (đề phòng trường hợp chưa chạy epoch nào)
+    if 'best_acc' in locals() and 'best_epoch' in locals():
+        print(f"🏆 KẾT QUẢ TỐT NHẤT: Accuracy {best_acc:.2f}% tại Epoch {best_epoch}")
+    print("="*50)
+
+    # --- 👇 BƯỚC QUAN TRỌNG: KHÔI PHỤC MODEL TỐT NHẤT 👇 ---
+    # Kiểm tra xem ta có lưu được model nào trong RAM không
+    if 'best_model_state' in locals() and best_model_state is not None:
+        print("🔄 Đang load lại trọng số tốt nhất từ RAM vào Model...")
+        model.load_state_dict(best_model_state)
+    else:
+        print("⚠️ Không tìm thấy model tốt nhất trong RAM, sẽ dùng model của epoch cuối cùng.")
+    # --------------------------------------------------------
+
     # Trước khi lưu phải remove mask để biến 0 ảo thành 0 thật
+    # Lưu ý: Lúc này model đã chứa trọng số của Best Epoch rồi, nên ta remove mask trên Best Epoch
     make_pruning_permanent(pruning_params)
     
     # Kiểm tra độ thưa (Sparsity)
@@ -158,9 +201,15 @@ def main():
             total_params += m.weight.nelement()
     print(f"✅ Final Model Sparsity: {100. * total_zeros / total_params:.2f}%")
 
+    # Tạo thư mục lưu nếu chưa có (Tránh lỗi FileNotFoundError)
+    import os
+    folder_path = os.path.dirname(args.save_path)
+    if folder_path and not os.path.exists(folder_path):
+        os.makedirs(folder_path, exist_ok=True)
+
     # Lưu file
     torch.save({'model_state_dict': model.state_dict()}, args.save_path)
-    print(f"💾 Model saved to {args.save_path}")
+    print(f"💾 Best Model saved to {args.save_path}")
 
 if __name__ == '__main__':
     main()
