@@ -22,21 +22,23 @@ class Config:
     # They are used to normalize the images to a similar scale
 
     #--- Cifar 10 ---
-    CIFAR_MEAN = (0.4914, 0.4822, 0.4465)
-    CIFAR_STD = (0.2023, 0.1994, 0.2010)
+    CIFAR10_MEAN = (0.4914, 0.4822, 0.4465)
+    CIFAR10_STD = (0.2023, 0.1994, 0.2010)
 
     #--- Cifar 100 ---
-    # CIFAR_MEAN = (0.5071, 0.4867, 0.4408)
-    # CIFAR_STD  = (0.2675, 0.2565, 0.2761)
+    CIFAR100_MEAN = (0.5071, 0.4867, 0.4408)
+    CIFAR100_STD = (0.2675, 0.2565, 0.2761)
 
-
+    # Set default using CIFAR-10
+    CIFAR_MEAN = CIFAR10_MEAN
+    CIFAR_STD  = CIFAR10_STD
     # --- File Paths ---
     CHECKPOINT_DIR = "./checkpoints/"
     
 print(f"Device set to: {Config.DEVICE}")
 
-class EvalConfig:
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    BATCH_SIZE = 128
-    CIFAR_MEAN = Config.CIFAR_MEAN
-    CIFAR_STD  = Config.CIFAR_STD
+# class EvalConfig:
+#     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+#     BATCH_SIZE = 128
+#     CIFAR_MEAN = Config.CIFAR_MEAN
+#     CIFAR_STD  = Config.CIFAR_STD
