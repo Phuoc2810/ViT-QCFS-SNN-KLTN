@@ -90,7 +90,7 @@ def main():
     ).to(device)
     
     # Load Checkpoint an toàn (tránh lỗi lệch key)
-    checkpoint = torch.load(args.checkpoint_path, map_location=device)
+    checkpoint = torch.load(args.checkpoint_path, map_location=device, weights_only=False)
     if 'model_state_dict' in checkpoint:
         state_dict = checkpoint['model_state_dict']
     else:
