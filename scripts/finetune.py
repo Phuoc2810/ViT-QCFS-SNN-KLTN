@@ -4,48 +4,46 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.utils.prune as prune
-from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
 import os
-
-# Import model của bạn (Đảm bảo đường dẫn đúng)
-# Nếu bạn để model trong src/model.py thì sửa lại import cho phù hợp
 import sys
+
+# Import config và hàm load data xịn từ dataset.py
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from src.model_ann import VisionTransformer 
+from src.dataset import get_dataloader # <--- Dùng cái này thay vì tự viết transform
+from src.config import Config
 
 def get_args():
     parser = argparse.ArgumentParser(description='Fine-tune Pruned ANN')
     parser.add_argument('--checkpoint_path', type=str, required=True, help='Path to best ANN checkpoint')
     parser.add_argument('--save_path', type=str, default='./checkpoints/ann_pruned_finetuned.pth')
+    
+    # --- THÊM DÒNG NÀY ĐỂ CHỌN DATASET ---
+    parser.add_argument('--dataset', type=str, default='cifar10', choices=['cifar10', 'cifar100'], help='Choose dataset')
+    
     parser.add_argument('--pruning_ratio', type=float, default=0.2, help='Amount of sparsity (e.g. 0.2 = 20%)')
     parser.add_argument('--epochs', type=int, default=15, help='Number of fine-tuning epochs')
     parser.add_argument('--lr', type=float, default=1e-5, help='Low learning rate for fine-tuning')
     parser.add_argument('--batch_size', type=int, default=128)
     
-    # Kiến trúc Model (Phải khớp với model cũ)
+    # Kiến trúc Model
     parser.add_argument('--embed_dim', type=int, default=192)
     parser.add_argument('--depth', type=int, default=12)
     parser.add_argument('--heads', type=int, default=3)
-    parser.add_argument('--L', type=int, default=8, help='Quantization levels (e.g. 4, 8, 16)')
-    parser.add_argument('--patience', type=int, default=10, help='Stop training if Acc does not increase for X epochs')
+    parser.add_argument('--L', type=int, default=4, help='Quantization levels')
+    parser.add_argument('--patience', type=int, default=10)
+    
     return parser.parse_args()
 
 def apply_pruning(model, amount):
-    """
-    Áp dụng Pruning nhưng KHÔNG remove mask ngay.
-    Việc giữ mask giúp PyTorch biết những trọng số nào cần giữ là 0 trong lúc train.
-    """
     print(f"✂️ Applying pruning mask with ratio: {amount}...")
     parameters_to_prune = []
     for name, module in model.named_modules():
         if isinstance(module, nn.Linear):
-            # Bỏ qua lớp classifier head để giữ độ chính xác cao nhất
             if "head" in name: 
                 continue
             parameters_to_prune.append((module, 'weight'))
     
-    # Dùng Global Unstructured Pruning
     prune.global_unstructured(
         parameters_to_prune,
         pruning_method=prune.L1Unstructured,
@@ -54,17 +52,12 @@ def apply_pruning(model, amount):
     return parameters_to_prune
 
 def make_pruning_permanent(parameters_to_prune):
-    """
-    Sau khi train xong, ta 'ép' mask vào trọng số thật để lưu file cho gọn.
-    """
     print("🔒 Making pruning permanent...")
     for module, name in parameters_to_prune:
         prune.remove(module, name)
 
 def reset_model(model):
-    # Duyet qua các module để reset bộ nhớ mem nếu có
     for name, module in model.named_modules():
-        # Neu module co bien 'mem', reset no ve None
         if hasattr(module, 'mem'):
             module.mem = None
 
@@ -72,62 +65,69 @@ def main():
     torch.autograd.set_detect_anomaly(True)
     args = get_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Device: {device}")
+    print(f"Device: {device} | Dataset: {args.dataset.upper()}")
 
-    # 1. Load Data (CIFAR-10)
-    transform_train = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
-        transforms.RandomHorizontalFlip(),
-        transforms.TrivialAugmentWide(), # Dùng Augmentation nhẹ
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-    ])
-    train_dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
+    # 1. Load Data (Dùng hàm chung từ dataset.py)
+    # Lưu ý: Hàm get_dataloader phải return train_loader, test_loader, num_classes
+    # (Nếu dataset.py chưa return num_classes thì bạn tự gán thủ công bên dưới)
+    try:
+        train_loader, test_loader, num_classes = get_dataloader(batch_size=args.batch_size, dataset_name=args.dataset)
+    except ValueError: 
+        # Fallback nếu hàm get_dataloader của bạn chưa sửa return num_classes
+        train_loader, test_loader = get_dataloader(batch_size=args.batch_size, dataset_name=args.dataset)
+        num_classes = 100 if args.dataset == 'cifar100' else 10
+
+    print(f"Data loaded. Num classes: {num_classes}")
 
     # 2. Khởi tạo & Load Model Gốc
     print(f"Loading checkpoint from {args.checkpoint_path}")
+    
+    # QUAN TRỌNG: Truyền đúng num_classes vào model
     model = VisionTransformer(
-        dim=args.embed_dim, depth=args.depth, heads=args.heads, num_classes=10, T=0, L=args.L
+        dim=args.embed_dim, depth=args.depth, heads=args.heads, 
+        num_classes=num_classes, # <--- Không hardcode số 10 nữa
+        T=0, L=args.L
     ).to(device)
     
+    # Load Checkpoint an toàn (tránh lỗi lệch key)
     checkpoint = torch.load(args.checkpoint_path, map_location=device)
     if 'model_state_dict' in checkpoint:
-        model.load_state_dict(checkpoint['model_state_dict'])
+        state_dict = checkpoint['model_state_dict']
     else:
-        model.load_state_dict(checkpoint)
-
-    print("🔧 Đang cưỡng chế toàn bộ mạng về T=0 (Chế độ ANN)...")
-    count = 0
-    for name, module in model.named_modules():
-        # Kiểm tra xem module có thuộc tính T không
-        if hasattr(module, 'T'):
-            module.T = 0 # Ép về 0
-            count += 1
-        # Reset luôn bộ nhớ mem nếu có
-        if hasattr(module, 'mem'):
-            module.mem = None
-            
-    print(f"✅ Đã reset T=0 cho {count} module. Mạng đã sạch sẽ!")
+        state_dict = checkpoint
     
-    # 3. Áp dụng Pruning (Tạo Mask)
-    # Bọc trong no_grad để không dính graph vào vòng lặp train
+    # Lọc bỏ các key không khớp (ví dụ nếu checkpoint cũ là 10 class mà giờ load vào model 100 class)
+    # Tuy nhiên, Pruning thường dùng chính checkpoint của dataset đó nên không lo.
+    try:
+        model.load_state_dict(state_dict)
+    except RuntimeError as e:
+        print(f"⚠️ Cảnh báo: Lỗi key khi load model (có thể do sai số class): {e}")
+        # Nếu cần thiết thì bỏ qua strict loading (chỉ dùng khi transfer learning)
+        # model.load_state_dict(state_dict, strict=False) 
+
+    # Reset về chế độ ANN
+    print("🔧 Đang cưỡng chế toàn bộ mạng về T=0 (Chế độ ANN)...")
+    for module in model.modules():
+        if hasattr(module, 'T'): module.T = 0
+        if hasattr(module, 'mem'): module.mem = None
+            
+    # 3. Áp dụng Pruning
     with torch.no_grad():
         pruning_params = apply_pruning(model, args.pruning_ratio)
     
-    # 4. Setup Optimizer cho Fine-tuning
-    # Lưu ý: Learning Rate phải RẤT NHỎ (1e-5 hoặc 5e-5) để không phá hỏng weight đang tốt
+    # 4. Optimizer
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     criterion = nn.CrossEntropyLoss()
     
-    # Khởi tạo biến theo dõi Early stopping
+    # Biến theo dõi
     best_acc = 0.0
     best_epoch = 0
     patience_counter = 0
+    best_model_state = None
 
-    # 5. Training Loop (Fine-tuning)
+    # 5. Training Loop
     model.train()
-    print(f"🚀 Start Fine-tuning for {args.epochs} epochs...")
+    print(f"🚀 Start Fine-tuning on {args.dataset.upper()}...")
     
     for epoch in range(args.epochs):
         total_loss = 0
@@ -151,65 +151,36 @@ def main():
         acc = 100. * correct / total
         print(f"Epoch {epoch+1}/{args.epochs} | Loss: {total_loss/len(train_loader):.4f} | Acc: {acc:.2f}%")
 
-        # Kiểm tra Early Stopping
         if acc > best_acc:
             best_acc = acc
             best_epoch = epoch + 1
-            patience_counter = 0 # Reset bộ đếm kiên nhẫn
-            
-            # Dùng deepcopy để chụp ảnh trạng thái model ngay lúc này
-            # (Cần import copy ở đầu file)
+            patience_counter = 0
             best_model_state = copy.deepcopy(model.state_dict())
-            
-            print(f"   ⭐ New Best Accuracy! (Đã lưu trạng thái tạm vào RAM)")
-    
+            print(f"   ⭐ New Best Accuracy!")
         else:
-            # Nếu không tốt hơn -> Tăng bộ đếm
             patience_counter += 1
-            print(f"   ⚠️ No improvement for {patience_counter}/{args.patience} epochs.")
-            
-            # Nếu đợi quá lâu (vượt ngưỡng patience) -> Dừng luôn
+            print(f"   ⚠️ No improvement ({patience_counter}/{args.patience})")
             if patience_counter >= args.patience:
-                print(f"🛑 Early Stopping triggered! Dừng sớm tại epoch {epoch+1}")
-                break # Thoát khỏi vòng lặp for epoch
-#  6. Chốt đơn (Lưu model)
+                print("🛑 Early Stopping!")
+                break
+
+    # 6. Lưu kết quả
     print("\n" + "="*50)
-    # Kiểm tra xem có biến best_acc không (đề phòng trường hợp chưa chạy epoch nào)
-    if 'best_acc' in locals() and 'best_epoch' in locals():
-        print(f"🏆 KẾT QUẢ TỐT NHẤT: Accuracy {best_acc:.2f}% tại Epoch {best_epoch}")
-    print("="*50)
-
-    # --- 👇 BƯỚC QUAN TRỌNG: KHÔI PHỤC MODEL TỐT NHẤT 👇 ---
-    # Kiểm tra xem ta có lưu được model nào trong RAM không
-    if 'best_model_state' in locals() and best_model_state is not None:
-        print("🔄 Đang load lại trọng số tốt nhất từ RAM vào Model...")
+    if best_model_state is not None:
+        print("🔄 Loading best model...")
         model.load_state_dict(best_model_state)
-    else:
-        print("⚠️ Không tìm thấy model tốt nhất trong RAM, sẽ dùng model của epoch cuối cùng.")
-    # --------------------------------------------------------
-
-    # Trước khi lưu phải remove mask để biến 0 ảo thành 0 thật
-    # Lưu ý: Lúc này model đã chứa trọng số của Best Epoch rồi, nên ta remove mask trên Best Epoch
+    
     make_pruning_permanent(pruning_params)
     
-    # Kiểm tra độ thưa (Sparsity)
-    total_zeros = 0
-    total_params = 0
-    for name, m in model.named_modules():
-        if isinstance(m, nn.Linear):
-            total_zeros += torch.sum(m.weight == 0).item()
-            total_params += m.weight.nelement()
-    print(f"✅ Final Model Sparsity: {100. * total_zeros / total_params:.2f}%")
+    # Kiểm tra độ thưa
+    total_zeros = sum(torch.sum(m.weight == 0).item() for m in model.modules() if isinstance(m, nn.Linear))
+    total_params = sum(m.weight.nelement() for m in model.modules() if isinstance(m, nn.Linear))
+    print(f"✅ Final Sparsity: {100. * total_zeros / total_params:.2f}%")
 
-    # Tạo thư mục lưu nếu chưa có (Tránh lỗi FileNotFoundError)
-    import os
-    folder_path = os.path.dirname(args.save_path)
-    if folder_path and not os.path.exists(folder_path):
-        os.makedirs(folder_path, exist_ok=True)
-
-    # Lưu file
+    # Tạo thư mục và lưu
+    os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
     torch.save({'model_state_dict': model.state_dict()}, args.save_path)
-    print(f"💾 Best Model saved to {args.save_path}")
+    print(f"💾 Saved to {args.save_path}")
 
 if __name__ == '__main__':
     main()
