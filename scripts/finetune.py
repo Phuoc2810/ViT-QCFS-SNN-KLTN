@@ -7,10 +7,10 @@ import torch.nn.utils.prune as prune
 import os
 import sys
 
-# Import config và hàm load data xịn từ dataset.py
+# Import config và hàm load data
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from src.model_ann import VisionTransformer 
-from src.dataset import get_dataloader # <--- Dùng cái này thay vì tự viết transform
+from src.dataset import get_dataloader 
 from src.config import Config
 
 def get_args():
@@ -18,7 +18,6 @@ def get_args():
     parser.add_argument('--checkpoint_path', type=str, required=True, help='Path to best ANN checkpoint')
     parser.add_argument('--save_path', type=str, default='./checkpoints/ann_pruned_finetuned.pth')
     
-    # --- THÊM DÒNG NÀY ĐỂ CHỌN DATASET ---
     parser.add_argument('--dataset', type=str, default='cifar10', choices=['cifar10', 'cifar100'], help='Choose dataset')
     
     parser.add_argument('--pruning_ratio', type=float, default=0.2, help='Amount of sparsity (e.g. 0.2 = 20%)')
@@ -26,7 +25,6 @@ def get_args():
     parser.add_argument('--lr', type=float, default=1e-5, help='Low learning rate for fine-tuning')
     parser.add_argument('--batch_size', type=int, default=128)
     
-    # Kiến trúc Model
     parser.add_argument('--embed_dim', type=int, default=192)
     parser.add_argument('--depth', type=int, default=12)
     parser.add_argument('--heads', type=int, default=3)
@@ -40,6 +38,7 @@ def apply_pruning(model, amount):
     parameters_to_prune = []
     for name, module in model.named_modules():
         if isinstance(module, nn.Linear):
+            # Không prune layer cuối cùng (head) để giữ accuracy ổn định
             if "head" in name: 
                 continue
             parameters_to_prune.append((module, 'weight'))
@@ -61,57 +60,68 @@ def reset_model(model):
         if hasattr(module, 'mem'):
             module.mem = None
 
+# --- Thêm hàm Validation riêng biệt ---
+def validate(model, test_loader, criterion, device):
+    model.eval() # Quan trọng: Chuyển sang chế độ đánh giá
+    test_loss = 0
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for inputs, targets in test_loader:
+            inputs, targets = inputs.to(device), targets.to(device)
+            reset_model(model)
+            outputs = model(inputs)
+            loss = criterion(outputs, targets)
+
+            test_loss += loss.item()
+            _, predicted = outputs.max(1)
+            total += targets.size(0)
+            correct += predicted.eq(targets).sum().item()
+    
+    acc = 100. * correct / total
+    avg_loss = test_loss / len(test_loader)
+    return avg_loss, acc
+
 def main():
     torch.autograd.set_detect_anomaly(True)
     args = get_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device} | Dataset: {args.dataset.upper()}")
 
-    # 1. Load Data (Dùng hàm chung từ dataset.py)
-    # Lưu ý: Hàm get_dataloader phải return train_loader, test_loader, num_classes
-    # (Nếu dataset.py chưa return num_classes thì bạn tự gán thủ công bên dưới)
+    # 1. Load Data
     try:
         train_loader, test_loader, num_classes = get_dataloader(batch_size=args.batch_size, dataset_name=args.dataset)
     except ValueError: 
-        # Fallback nếu hàm get_dataloader của bạn chưa sửa return num_classes
         train_loader, test_loader = get_dataloader(batch_size=args.batch_size, dataset_name=args.dataset)
         num_classes = 100 if args.dataset == 'cifar100' else 10
 
     print(f"Data loaded. Num classes: {num_classes}")
 
-    # 2. Khởi tạo & Load Model Gốc
+    # 2. Khởi tạo & Load Model
     print(f"Loading checkpoint from {args.checkpoint_path}")
-    
-    # QUAN TRỌNG: Truyền đúng num_classes vào model
     model = VisionTransformer(
         dim=args.embed_dim, depth=args.depth, heads=args.heads, 
-        num_classes=num_classes, # <--- Không hardcode số 10 nữa
+        num_classes=num_classes, 
         T=0, L=args.L
     ).to(device)
     
-    # Load Checkpoint an toàn (tránh lỗi lệch key)
     checkpoint = torch.load(args.checkpoint_path, map_location=device, weights_only=False)
     if 'model_state_dict' in checkpoint:
         state_dict = checkpoint['model_state_dict']
     else:
         state_dict = checkpoint
     
-    # Lọc bỏ các key không khớp (ví dụ nếu checkpoint cũ là 10 class mà giờ load vào model 100 class)
-    # Tuy nhiên, Pruning thường dùng chính checkpoint của dataset đó nên không lo.
     try:
         model.load_state_dict(state_dict)
     except RuntimeError as e:
-        print(f"⚠️ Cảnh báo: Lỗi key khi load model (có thể do sai số class): {e}")
-        # Nếu cần thiết thì bỏ qua strict loading (chỉ dùng khi transfer learning)
-        # model.load_state_dict(state_dict, strict=False) 
+        print(f"⚠️ Cảnh báo key: {e}")
 
-    # Reset về chế độ ANN
-    print("🔧 Đang cưỡng chế toàn bộ mạng về T=0 (Chế độ ANN)...")
+    # Reset về ANN
     for module in model.modules():
         if hasattr(module, 'T'): module.T = 0
         if hasattr(module, 'mem'): module.mem = None
             
-    # 3. Áp dụng Pruning
+    # 3. Apply Pruning
     with torch.no_grad():
         pruning_params = apply_pruning(model, args.pruning_ratio)
     
@@ -119,21 +129,21 @@ def main():
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     criterion = nn.CrossEntropyLoss()
     
-    # Biến theo dõi
     best_acc = 0.0
     best_epoch = 0
     patience_counter = 0
     best_model_state = None
 
     # 5. Training Loop
-    model.train()
     print(f"🚀 Start Fine-tuning on {args.dataset.upper()}...")
     
     for epoch in range(args.epochs):
-        total_loss = 0
+        model.train() # Chuyển về chế độ train
+        train_loss = 0
         correct = 0
         total = 0
         
+        # --- TRAIN ---
         for batch_idx, (inputs, targets) in enumerate(train_loader):
             inputs, targets = inputs.to(device), targets.to(device)
             reset_model(model)
@@ -143,43 +153,52 @@ def main():
             loss.backward()
             optimizer.step()
 
-            total_loss += loss.item()
+            train_loss += loss.item()
             _, predicted = outputs.max(1)
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
         
-        acc = 100. * correct / total
-        print(f"Epoch {epoch+1}/{args.epochs} | Loss: {total_loss/len(train_loader):.4f} | Acc: {acc:.2f}%")
+        train_acc = 100. * correct / total
+        avg_train_loss = train_loss / len(train_loader)
 
-        if acc > best_acc:
-            best_acc = acc
+        # --- VALIDATE (TEST) ---
+        # Đây là bước quan trọng nhất để biết acc thực tế
+        val_loss, val_acc = validate(model, test_loader, criterion, device)
+
+        print(f"Epoch {epoch+1}/{args.epochs}")
+        print(f"  Train Loss: {avg_train_loss:.4f} | Train Acc: {train_acc:.2f}%")
+        print(f"  Val Loss  : {val_loss:.4f} | Val Acc  : {val_acc:.2f}%") # <--- In ra Val Acc
+
+        # Save Best dựa trên VAL ACC (không phải Train Acc)
+        if val_acc > best_acc:
+            best_acc = val_acc
             best_epoch = epoch + 1
             patience_counter = 0
             best_model_state = copy.deepcopy(model.state_dict())
-            print(f"   ⭐ New Best Accuracy!")
+            print(f"  ⭐ New Best Accuracy! (Saved)")
         else:
             patience_counter += 1
-            print(f"   ⚠️ No improvement ({patience_counter}/{args.patience})")
+            print(f"  ⚠️ No improvement ({patience_counter}/{args.patience})")
             if patience_counter >= args.patience:
                 print("🛑 Early Stopping!")
                 break
 
     # 6. Lưu kết quả
     print("\n" + "="*50)
+    print(f"Best Val Accuracy: {best_acc:.2f}% at Epoch {best_epoch}")
+    
     if best_model_state is not None:
         print("🔄 Loading best model...")
         model.load_state_dict(best_model_state)
     
     make_pruning_permanent(pruning_params)
     
-    # Kiểm tra độ thưa
     total_zeros = sum(torch.sum(m.weight == 0).item() for m in model.modules() if isinstance(m, nn.Linear))
     total_params = sum(m.weight.nelement() for m in model.modules() if isinstance(m, nn.Linear))
     print(f"✅ Final Sparsity: {100. * total_zeros / total_params:.2f}%")
 
-    # Tạo thư mục và lưu
     os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
-    torch.save({'model_state_dict': model.state_dict()}, args.save_path)
+    torch.save({'model_state_dict': model.state_dict(), 'args': args}, args.save_path)
     print(f"💾 Saved to {args.save_path}")
 
 if __name__ == '__main__':
