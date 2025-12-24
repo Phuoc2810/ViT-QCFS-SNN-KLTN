@@ -66,7 +66,7 @@ def main():
     timesteps_list = [int(t) for t in args.timesteps.split(',')]
     
     print(f"📂 Loading checkpoint: {args.checkpoint_path}")
-    checkpoint = torch.load(args.checkpoint_path, map_location=device)
+    checkpoint = torch.load(args.checkpoint_path, map_location=device, weights_only=False)
     
     # --- 1. AUTO DETECT CONFIG ---
     saved_args = checkpoint.get('args', None)
