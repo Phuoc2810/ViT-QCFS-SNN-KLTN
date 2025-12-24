@@ -115,16 +115,21 @@ def main():
     checkpoint = torch.load(args.checkpoint_path, map_location=device, weights_only=False)
     saved_args = checkpoint.get('args', None)
     
+    if args.dataset == 'cifar100':
+        num_classes = 100
+    elif args.dataset == 'cifar10':
+        num_classes = 10
+    else:
+        num_classes = checkpoint.get('num_classes', 10)
+
     if saved_args:
         embed_dim = saved_args.embed_dim
         depth = saved_args.depth
         heads = saved_args.heads
-        num_classes = checkpoint.get('num_classes', 10)
     else:
         embed_dim = args.embed_dim
         depth = args.depth
         heads = args.heads
-        num_classes = 100 if args.dataset == 'cifar100' else 10
 
     print(f"Config: Dim={embed_dim}, Depth={depth}, Heads={heads}, T={args.T}")
 
