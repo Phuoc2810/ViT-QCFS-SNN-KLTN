@@ -112,7 +112,7 @@ def main():
     
     # 1. Load Checkpoint & Config Auto-detect
     print(f"Loading checkpoint: {args.checkpoint_path}")
-    checkpoint = torch.load(args.checkpoint_path, map_location=device)
+    checkpoint = torch.load(args.checkpoint_path, map_location=device, weights_only=False)
     saved_args = checkpoint.get('args', None)
     
     if saved_args:
