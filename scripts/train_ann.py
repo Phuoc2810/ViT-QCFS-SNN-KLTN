@@ -13,6 +13,8 @@ from src.utils import set_seed
 
 def get_args():
     parser = argparse.ArgumentParser(description='Train ANN Vision Transformer')
+    parser.add_argument('--dataset', type=str, default='cifar10', choices=['cifar10', 'cifar100'], 
+                        help='Choose dataset: cifar10 or cifar100')
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
     parser.add_argument('--epochs', type=int, default=200, help='Number of epochs')
@@ -80,16 +82,20 @@ def main():
     # Tạo thư mục chứa checkpoint nếu chưa có
     os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
 
+    print(f"⚙️ Config: Dataset={args.dataset.upper()}")
     # Load Data
-    train_loader, test_loader = get_dataloader(batch_size=args.batch_size)
+    train_loader, test_loader, num_classes = get_dataloader(batch_size=args.batch_size, dataset_name=args.dataset)
+    
+    print(f"Creating ANN Model: Depth={args.depth}, Heads={args.heads}, L={args.L}, Classes={num_classes}")
+
     
     # Khởi tạo Model
     print("Creating ANN Model: Depth={args.depth}, Heads={args.heads}, L={args.L}")
-    model = model = VisionTransformer(
+    model = VisionTransformer(
         dim=args.embed_dim, 
         depth=args.depth, 
         heads=args.heads, 
-        num_classes=10,
+        num_classes=num_classes,
         T=args.T,  # Thường ANN thì T=0
         L=args.L   # Quan trọng cho QCFS
     ).to(device)
@@ -116,6 +122,8 @@ def main():
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'best_acc': best_acc,
+                'num_classes': num_classes,
+                'args': args
             }, args.save_path)
 
 if __name__ == "__main__":
